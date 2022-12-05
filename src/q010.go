@@ -32,15 +32,19 @@ func (m *Map) Out(key string, val interface{}) {
 	defer m.rmx.Unlock()
 	item, ok := m.c[key]
 	if !ok {
+		// 不存在时候，直接设置value
 		m.c[key] = &entry{
 			value:   val,
 			isExist: true,
 		}
 		return
 	}
+	// 存在时候，先更新value
 	item.value = val
 	if !item.isExist {
+		// 如果isExist为false,则表示有读的请求
 		if item.ch != nil {
+			// 关闭ch,读ch的就可以退出循环了
 			close(item.ch)
 			item.ch = nil
 		}
@@ -51,15 +55,20 @@ func (m *Map) Out(key string, val interface{}) {
 func (m *Map) Rd(key string, timeout time.Duration) interface{} {
 	m.rmx.RLock()
 	if e, ok := m.c[key]; ok && e.isExist {
+		// 如果值存在，则释放读锁，返回值
 		m.rmx.RUnlock()
 		return e.value
 	} else if !ok {
+		// 如果值不存在,则将未设置的值放到map中，并且等待值设置
+		// 释放读锁
 		m.rmx.RUnlock()
+		// 加锁，将未设置的值放到map中
 		m.rmx.Lock()
 		e = &entry{ch: make(chan struct{}), isExist: false}
 		m.c[key] = e
 		m.rmx.Unlock()
 		log.Println("协程阻塞 -> ", key)
+		// 等待值或者超市
 		select {
 		case <-e.ch:
 			return e.value
@@ -93,7 +102,7 @@ func main() {
 		}()
 	}
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 7)
 	for i := 0; i < 10; i++ {
 		go func(val int) {
 			mapval.Out("key", val)
