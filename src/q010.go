@@ -54,39 +54,26 @@ func (m *Map) Out(key string, val interface{}) {
 
 func (m *Map) Rd(key string, timeout time.Duration) interface{} {
 	m.rmx.RLock()
-	if e, ok := m.c[key]; ok && e.isExist {
-		// 如果值存在，则释放读锁，返回值
-		m.rmx.RUnlock()
-		return e.value
-	} else if !ok {
-		// 如果值不存在,则将未设置的值放到map中，并且等待值设置
-		// 释放读锁
-		m.rmx.RUnlock()
-		// 加锁，将未设置的值放到map中
-		m.rmx.Lock()
-		e = &entry{ch: make(chan struct{}), isExist: false}
-		m.c[key] = e
-		m.rmx.Unlock()
-		log.Println("协程阻塞 -> ", key)
-		// 等待值或者超市
-		select {
-		case <-e.ch:
-			return e.value
-		case <-time.After(timeout):
-			log.Println("协程超时 -> ", key)
-			return nil
-		}
-	} else {
-		m.rmx.RUnlock()
-		log.Println("协程阻塞 -> ", key)
-		select {
-		case <-e.ch:
-			return e.value
-		case <-time.After(timeout):
-			log.Println("协程超时 -> ", key)
-			return nil
-		}
+	value, keyValueExist := m.c[key]
+	m.rmx.RUnlock()
+	if keyValueExist && value.isExist {
+		return value.value
 	}
+	if !keyValueExist {
+		m.rmx.Lock()
+		value = &entry{ch: make(chan struct{}), isExist: false}
+		m.c[key] = value
+		m.rmx.Unlock()
+	}
+	log.Println("协程阻塞 -> ", key)
+	select {
+	case <-value.ch:
+		return value.value
+	case <-time.After(timeout):
+		log.Println("协程超时 -> ", key)
+		return nil
+	}
+
 }
 
 func main() {
@@ -102,15 +89,19 @@ func main() {
 		}()
 	}
 
-	time.Sleep(time.Second * 7)
+	time.Sleep(time.Second * 3)
+	wg := &sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
+		wg.Add(1)
 		go func(val int) {
+			defer wg.Done()
 			mapval.Out("key", val)
 		}(i)
 	}
-
-	time.Sleep(time.Second * 30)
+	wg.Wait()
+	time.Sleep(time.Second)
 }
+
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
